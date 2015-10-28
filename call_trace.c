@@ -8,7 +8,7 @@
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
 
-static char *program_path()
+static char *program_path(void)
 {
 	const int PATH_MAX = 100;
 	char *path = (char *)malloc(PATH_MAX);
@@ -29,6 +29,7 @@ static void getNameFileAndLine(unw_word_t addr, char **fname, char *file,
 {
 	char buf[256];
 	char *exe_name = program_path();
+
 	if (!exe_name) {
 		exe_name = "./a.out";
 	}
@@ -36,40 +37,40 @@ static void getNameFileAndLine(unw_word_t addr, char **fname, char *file,
 	// prepare command to be executed
 	int ret = sprintf(buf, "/usr/bin/addr2line -C -e %s -f -i %lx",
 			  exe_name, addr);
+
 	free(exe_name);
 	assert(ret < 255);
 	FILE *f = popen(buf, "r");
 
 	if (f == NULL) {
 		perror(buf);
+		file[0] = 0;
+		(*fname)[0] = 0;
+		*line = 0;
 		return;
 	}
 
 	// get function name
-	int read_size = 256;
-	fgets(buf, read_size, f);
-	char *name = (char *)malloc(read_size * sizeof(*fname));
+	const int read_size = 256;
+	char *name = NULL;
+	int name_strlen = 0;
+	int name_len = 0;
+	char *endline_pos = NULL;
 
-	char *endline_pos = strchr(buf, '\n');
-	if (endline_pos) {
-		*endline_pos = '\0';
-		strcpy(name, buf);
-	} else {
-		int name_len = read_size;
-		int name_strlen = 255;
-		char *ptr = name;
-		*ptr = '\0';
-		strncat(ptr, buf, 256);
-
-		do {
-			name_len += 256;
-			name = (char *)realloc(name, name_len);
-			ptr = name + name_strlen;
-			fgets(buf, read_size, f);
-			strncat(ptr, buf, 256);
-			name_strlen += 255;
-		} while (!strchr(buf, '\n'));
+	/* fill buffer and check for newline */
+	while (!endline_pos) {
+		fgets(buf, read_size, f);
+		endline_pos = strchr(buf, '\n');
+		name_len += read_size;
+		name = realloc(name, name_len);
+		char *ptr = name + name_strlen;
+		strncpy(ptr, buf, read_size);
+		name_strlen += endline_pos ? ((endline_pos - buf) + 1) : 255;
 	}
+
+	assert(name_strlen == (int)strlen(name));
+	name[name_strlen - 1] = '\0';
+
 	*fname = name;
 
 	// get file and line
@@ -102,14 +103,13 @@ void show_backtrace(void)
 	while (unw_step(&cursor) > 0) {
 		file[0] = '\0';
 
-		int line = 0;
-
 		unw_get_reg(&cursor, UNW_REG_IP, &ip);
 		unw_get_reg(&cursor, UNW_REG_SP, &sp);
 
 		char *name[1] = {NULL};
+		int line = 0;
 		getNameFileAndLine((long)ip, name, file, &line);
-		printf("#%d %s in %s:%d\n", ctr, *name, file, line);
+		printf("#%d %s\n   in %s:%d\n", ctr, *name, file, line);
 		++ctr;
 		free(name[0]);
 	}
