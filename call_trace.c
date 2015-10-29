@@ -116,6 +116,12 @@ static void get_stack(unw_word_t addr, char **fname, char *file, int *line)
 	pclose(f);
 }
 
+/*
+ * Prints a backtrace using libunwind. The printed format is:
+ *
+ * 	#<number> <demangled function name>+<hexadecimal pointer offset>
+ *
+ */
 void show_backtrace(void)
 {
 	char file[256];
