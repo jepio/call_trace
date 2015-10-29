@@ -8,83 +8,110 @@
 #define UNW_LOCAL_ONLY
 #include <libunwind.h>
 
-static char *program_path(void)
+struct sized_ptr {
+	char *data;
+	int len;
+};
+
+static int program_path(struct sized_ptr ret)
 {
-	const int PATH_MAX = 100;
-	char *path = (char *)malloc(PATH_MAX);
-	if (path != NULL) {
-		int len = readlink("/proc/self/exe", path, PATH_MAX - 1);
-		if (len == -1) {
-			free(path);
-			path = NULL;
-		} else {
-			path[len] = '\0';
-		}
+
+	assert(ret.data != NULL);
+	assert(ret.len > 0);
+
+	int len = readlink("/proc/self/exe", ret.data, ret.len - 1);
+
+	if (len != -1) {
+		ret.data[len] = '\0';
+		return 0;
+	} else {
+		return -1;
 	}
-	return path;
 }
 
-static void getNameFileAndLine(unw_word_t addr, char **fname, char *file,
-			       int *line)
+static FILE *open_addr2line(const char *exe_name, unw_word_t addr)
 {
+	assert(exe_name != NULL);
+
 	char buf[256];
-	char *exe_name = program_path();
+	int ret =
+	    snprintf(buf, 256, "addr2line -C -e %s -f -i %lx", exe_name, addr);
 
-	if (!exe_name) {
-		exe_name = "./a.out";
-	}
+	if (ret < 0)
+		return NULL;
+	return popen(buf, "r");
+}
 
-	// prepare command to be executed
-	int ret = sprintf(buf, "/usr/bin/addr2line -C -e %s -f -i %lx",
-			  exe_name, addr);
+/*
+ * fail: returns -1 and leaves *fname unchanged.
+ * success: returns strlen(*fname) and the function_name in *fname
+ */
+static ssize_t parse_funname(FILE *f, char **fname)
+{
+	assert(f);
+	assert(fname);
 
-	free(exe_name);
-	assert(ret < 255);
-	FILE *f = popen(buf, "r");
-
-	if (f == NULL) {
-		perror(buf);
-		file[0] = 0;
-		(*fname)[0] = 0;
-		*line = 0;
-		return;
-	}
-
-	// get function name
-	const int read_size = 256;
 	char *name = NULL;
-	int name_strlen = 0;
-	int name_len = 0;
-	char *endline_pos = NULL;
+	size_t n = 0;
+	ssize_t ret = getline(&name, &n, f);
 
-	/* fill buffer and check for newline */
-	while (!endline_pos) {
-		fgets(buf, read_size, f);
-		endline_pos = strchr(buf, '\n');
-		name_len += read_size;
-		name = realloc(name, name_len);
-		char *ptr = name + name_strlen;
-		strncpy(ptr, buf, read_size);
-		name_strlen += endline_pos ? ((endline_pos - buf) + 1) : 255;
+	if (ret == -1) {
+		perror("Reading function name");
+	} else {
+		name[ret - 1] = '\0';
+		*fname = name;
 	}
+	return ret;
+}
 
-	assert(name_strlen == (int)strlen(name));
-	name[name_strlen - 1] = '\0';
+/*
+ * fail: returns -1 and *filename / *line unchanged
+ * success: return number of characters read from f, and data in *filename /
+ * *line
+ */
+static ssize_t parse_filename(FILE *f, char *filename, int *line)
+{
+	assert(f);
+	assert(filename);
+	assert(line);
 
-	*fname = name;
+	char *buf = NULL;
+	size_t n = 0;
+	ssize_t ret = getline(&buf, &n, f);
 
-	// get file and line
-	fgets(buf, 256, f);
-	{
-		char *p = buf;
-		// file name is until ':'
-		while (*p != ':') ++p;
-
-		*(p++) = '\0';
-		// after file name follows line number
-		strcpy(file, buf);
+	if (ret == -1) {
+		perror("Reading file name and line number");
+	} else {
+		/* split into two string at ':' */
+		char *p = strchr(buf, ':');
+		*p = '\0';
+		++p;
+		strcpy(filename, buf);
 		sscanf(p, "%d", line);
 	}
+	free(buf);
+	return ret;
+}
+
+static void get_stack(unw_word_t addr, char **fname, char *file, int *line)
+{
+	/* Returns in case of fail */
+	*fname = NULL;
+	*file = '\0';
+	*line = 0;
+
+	/* get name of current application */
+	char exe_buffer[100];
+	struct sized_ptr exe_name = {.data = exe_buffer, .len = 100};
+	if (program_path(exe_name) != 0)
+		return;
+
+	FILE *f = open_addr2line(exe_name.data, addr);
+	if (f == NULL)
+		return;
+
+	parse_funname(f, fname);
+	parse_filename(f, file, line);
 
 	pclose(f);
 }
@@ -106,11 +133,14 @@ void show_backtrace(void)
 		unw_get_reg(&cursor, UNW_REG_IP, &ip);
 		unw_get_reg(&cursor, UNW_REG_SP, &sp);
 
-		char *name[1] = {NULL};
+		char *name;
 		int line = 0;
-		getNameFileAndLine((long)ip, name, file, &line);
-		printf("#%d %s\n   in %s:%d\n", ctr, *name, file, line);
+		get_stack((long)ip, &name, file, &line);
+		printf("#%d %s\n   in %s:%d\n", ctr, name, file, line);
 		++ctr;
-		free(name[0]);
+		free(name);
+		name = NULL;
 	}
 }
+
+/* vim: set noet ts=8 sw=8: */
