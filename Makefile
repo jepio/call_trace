@@ -3,7 +3,7 @@ CFLAGS = -g -O2
 PIC = -fPIC
 CT_CFLAGS = $(PIC) -Wall -std=gnu99 $(CFLAGS)
 CT_LDFLAGS = -Wl,-O1,-z,defs,-soname,$@.0
-LDLIBS = -lunwind
+LDLIBS = -lunwind -liberty
 
 all: shared
 
