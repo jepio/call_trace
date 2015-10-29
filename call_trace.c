@@ -15,7 +15,6 @@ struct sized_ptr {
 
 static int program_path(struct sized_ptr ret)
 {
-
 	assert(ret.data != NULL);
 	assert(ret.len > 0);
 
@@ -84,10 +83,10 @@ static ssize_t parse_filename(FILE *f, char *filename, int *line)
 	} else {
 		/* split into two string at ':' */
 		char *p = strchr(buf, ':');
-		*p = '\0';
+		p[0] = '\0';
 		++p;
 		strcpy(filename, buf);
-		sscanf(p, "%d", line);
+		*line = strtol(p, NULL, 0);
 	}
 	free(buf);
 	return ret;
@@ -97,16 +96,18 @@ static void get_stack(unw_word_t addr, char **fname, char *file, int *line)
 {
 	/* Returns in case of fail */
 	*fname = NULL;
-	*file = '\0';
+	file[0] = '\0';
 	*line = 0;
 
 	/* get name of current application */
 	char exe_buffer[100];
 	struct sized_ptr exe_name = {.data = exe_buffer, .len = 100};
+
 	if (program_path(exe_name) != 0)
 		return;
 
 	FILE *f = open_addr2line(exe_name.data, addr);
+
 	if (f == NULL)
 		return;
 
@@ -119,13 +120,15 @@ static void get_stack(unw_word_t addr, char **fname, char *file, int *line)
 /*
  * Prints a backtrace using libunwind. The printed format is:
  *
- * 	#<number> <demangled function name>+<hexadecimal pointer offset>
+ *	#<number> <demangled function name>+<hexadecimal pointer offset>
  *
  */
 void show_backtrace(void)
 {
 	char file[256];
+	char *name;
 	int ctr = 0;
+	int line = 0;
 	unw_cursor_t cursor;
 	unw_context_t uc;
 	unw_word_t ip, sp;
@@ -134,18 +137,13 @@ void show_backtrace(void)
 	unw_init_local(&cursor, &uc);
 
 	while (unw_step(&cursor) > 0) {
-		file[0] = '\0';
-
 		unw_get_reg(&cursor, UNW_REG_IP, &ip);
 		unw_get_reg(&cursor, UNW_REG_SP, &sp);
 
-		char *name;
-		int line = 0;
 		get_stack((long)ip, &name, file, &line);
 		printf("#%d %s\n   in %s:%d\n", ctr, name, file, line);
 		++ctr;
 		free(name);
-		name = NULL;
 	}
 }
 
