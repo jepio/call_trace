@@ -13,17 +13,17 @@
  */
 static char *get_full_proc_name(unw_cursor_t *cursor, unw_word_t *offp)
 {
-	int len = 256;
-	char *name = malloc(sizeof(*name) * len);
-	int ret = unw_get_proc_name(cursor, name, len, offp);
+	int len = 200;
+	char *name = NULL;
+	int ret;
 
-	if (ret == UNW_ENOMEM) {
-		do {
-			len *= 1.4;
-			name = realloc(name, len);
-			ret = unw_get_proc_name(cursor, name, len, offp);
-		} while (ret == UNW_ENOMEM);
-	} else if (ret == UNW_ENOINFO || ret == UNW_EUNSPEC) {
+	do {
+		len *= 1.4;
+		name = realloc(name, sizeof(*name) * len);
+		ret = unw_get_proc_name(cursor, name, len, offp);
+	} while (ret == UNW_ENOMEM);
+
+	if (ret == UNW_ENOINFO || ret == UNW_EUNSPEC) {
 		perror("unw_get_proc_name");
 		free(name);
 		name = NULL;
